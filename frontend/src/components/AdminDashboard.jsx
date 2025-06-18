@@ -6,15 +6,17 @@ import { Bar } from 'react-chartjs-2';
 export const AdminDashboard = ({ socket, sessionCode }) => {
   const [question, setQuestion] = useState('');
   const [options, setOptions] = useState(['', '']);
+  const [duration, setDuration] = useState(5); // Default 5 minutes
   const [results, setResults] = useState(null);
+  const [history, setHistory] = useState([]);
 
   const createPoll = () => {
     const validOptions = options.filter(opt => opt.trim()).slice(0, 2);
-    if (question.trim() && validOptions.length) {
-      console.log('Creating poll:', { sessionCode, question, options: validOptions });
-      socket.emit('poll-created', { sessionCode, question, options: validOptions });
+    if (question.trim() && validOptions.length && duration > 0) {
+      console.log('Creating poll:', { sessionCode, question, options: validOptions, duration });
+    //   socket.emit('poll-created', { sessionCode, question, options: validOptions, duration });
     } else {
-      console.log('Invalid poll data');
+      console.log('Invalid poll data or duration');
     }
   };
 
@@ -27,6 +29,9 @@ export const AdminDashboard = ({ socket, sessionCode }) => {
     const handlePollUpdated = (data) => {
       console.log('Poll updated:', data);
       setResults(data.results);
+      if (data.results) {
+        setHistory((prev) => [...prev, { ...data.results, timestamp: new Date().toISOString() }]);
+      }
     };
     socket.on('poll-updated', handlePollUpdated);
     return () => socket.off('poll-updated', handlePollUpdated);
@@ -75,10 +80,18 @@ export const AdminDashboard = ({ socket, sessionCode }) => {
         >
           Add Option
         </button>
+        <input
+          type="number"
+          className="mt-2 p-2 border rounded w-full"
+          value={duration}
+          onChange={(e) => setDuration(Math.max(1, parseInt(e.target.value) || 1))}
+          placeholder="Duration in minutes"
+          min="1"
+        />
         <button
           className="mt-2 p-2 bg-blue-500 text-white rounded"
           onClick={createPoll}
-          disabled={!question.trim() || !options.some(opt => opt.trim())}
+          disabled={!question.trim() || !options.some(opt => opt.trim()) || duration <= 0}
         >
           Create Poll
         </button>
@@ -93,6 +106,17 @@ export const AdminDashboard = ({ socket, sessionCode }) => {
         <div className="mt-4">
           <h3 className="text-lg font-semibold">Live Results</h3>
           <Bar data={chartData} />
+        </div>
+      )}
+      {history.length > 0 && (
+        <div className="mt-4">
+          <h3 className="text-lg font-semibold">Poll History</h3>
+          {history.map((h, index) => (
+            <div key={index} className="p-2 border rounded mt-2">
+              <p>{h.question} - {new Date(h.timestamp).toLocaleString()}</p>
+              <pre>{JSON.stringify(h.responses, null, 2)}</pre>
+            </div>
+          ))}
         </div>
       )}
     </motion.div>

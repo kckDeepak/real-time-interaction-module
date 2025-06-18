@@ -1,10 +1,9 @@
 const mongoose = require('mongoose');
 
 const userResponseSchema = new mongoose.Schema({
-  sessionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Session', required: true },
-  pollId: { type: mongoose.Schema.Types.ObjectId, ref: 'Poll', required: true },
-  userId: { type: String, required: true },
-  selectedOption: { type: Number, required: true },
+  pollId: { type: mongoose.Schema.Types.ObjectId, ref: 'Poll', index: true }, // Add index
+  userId: String,
+  selectedOption: Number,
 });
 
 module.exports = mongoose.model('UserResponse', userResponseSchema);

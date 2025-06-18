@@ -46,7 +46,7 @@ function App() {
       console.log('Session ended:', data);
       setMessage(data.message);
       setIsSessionJoined(false);
-      setPollId('');
+      setPollId(''); // Clear pollId to prevent re-render issues
     });
     socket.on('error', (data) => {
       console.log('Error:', data);
@@ -75,7 +75,7 @@ function App() {
 
   const createInitialPoll = () => {
     if (isSessionJoined) {
-      socket.emit('poll-created', { sessionCode, question: 'Test Poll?', options: ['Yes', 'No'] });
+      socket.emit('poll-created', { sessionCode, question: 'Test Poll?', options: ['Yes', 'No'], duration: 5 });
     }
   };
 
@@ -123,7 +123,7 @@ function App() {
               isSessionJoined ? (
                 <AdminDashboard socket={socket} sessionCode={sessionCode} />
               ) : (
-                <Navigate to="/" />
+                <Navigate to="/" replace />
               )
             }
           />
@@ -133,11 +133,11 @@ function App() {
               isSessionJoined ? (
                 <UserDashboard socket={socket} sessionCode={sessionCode} pollId={pollId} userId={userId} />
               ) : (
-                <Navigate to="/" />
+                <Navigate to="/" replace />
               )
             }
           />
-          <Route path="/" element={<Navigate to="/admin" />} />
+          <Route path="/" element={<Navigate to="/admin" replace />} />
         </Routes>
       </div>
     </Router>
