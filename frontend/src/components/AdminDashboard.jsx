@@ -1,6 +1,7 @@
 // client/src/components/AdminDashboard.jsx
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { Bar } from 'react-chartjs-2';
 
 export const AdminDashboard = ({ socket, sessionCode }) => {
   const [question, setQuestion] = useState('');
@@ -30,6 +31,16 @@ export const AdminDashboard = ({ socket, sessionCode }) => {
     socket.on('poll-updated', handlePollUpdated);
     return () => socket.off('poll-updated', handlePollUpdated);
   }, [socket]);
+
+  const chartData = results && {
+    labels: results.options,
+    datasets: [{
+      label: 'Votes',
+      data: results.options.map((_, index) => results.responses[index] || 0),
+      backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56'],
+      borderWidth: 1,
+    }],
+  };
 
   return (
     <motion.div
@@ -81,7 +92,7 @@ export const AdminDashboard = ({ socket, sessionCode }) => {
       {results && (
         <div className="mt-4">
           <h3 className="text-lg font-semibold">Live Results</h3>
-          <pre>{JSON.stringify(results, null, 2)}</pre>
+          <Bar data={chartData} />
         </div>
       )}
     </motion.div>

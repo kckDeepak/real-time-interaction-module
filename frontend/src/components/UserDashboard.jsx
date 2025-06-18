@@ -1,6 +1,7 @@
 // client/src/components/UserDashboard.jsx
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { Pie } from 'react-chartjs-2';
 
 export const UserDashboard = ({ socket, sessionCode, pollId, userId }) => {
   const [selectedOption, setSelectedOption] = useState(null);
@@ -15,12 +16,20 @@ export const UserDashboard = ({ socket, sessionCode, pollId, userId }) => {
 
   useEffect(() => {
     const handleNewPoll = (data) => {
-      console.log('New poll:', data);
+      console.log('New poll received:', data);
+      // Initialize results with new poll data
+      setResults({
+        question: data.question,
+        options: data.options,
+        responses: data.options.reduce((acc, _, index) => {
+          acc[index] = 0;
+          return acc;
+        }, {}),
+      });
       setSelectedOption(null);
-      setResults(null);
     };
     const handlePollUpdated = (data) => {
-      console.log('Poll updated:', data);
+      console.log('Poll updated received:', data);
       setResults(data.results);
     };
     socket.on('new-poll', handleNewPoll);
@@ -31,6 +40,15 @@ export const UserDashboard = ({ socket, sessionCode, pollId, userId }) => {
     };
   }, [socket]);
 
+  const chartData = results && {
+    labels: results.options,
+    datasets: [{
+      data: results.options.map((_, index) => results.responses[index] || 0),
+      backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56'],
+      borderWidth: 1,
+    }],
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -40,8 +58,8 @@ export const UserDashboard = ({ socket, sessionCode, pollId, userId }) => {
       <h2 className="text-2xl font-bold mb-4">User Dashboard</h2>
       {pollId && (
         <div className="mb-4">
-          <h3 className="text-lg font-semibold">Poll: {results?.question}</h3>
-          {results?.options.map((opt, index) => (
+          <h3 className="text-lg font-semibold">Poll: {results?.question || 'Loading...'}</h3>
+          {results?.options && results.options.map((opt, index) => (
             <div key={index} className="mt-2">
               <label className="flex items-center">
                 <input
@@ -68,7 +86,7 @@ export const UserDashboard = ({ socket, sessionCode, pollId, userId }) => {
       {results && (
         <div className="mt-4">
           <h3 className="text-lg font-semibold">Live Results</h3>
-          <pre>{JSON.stringify(results, null, 2)}</pre>
+          <Pie data={chartData} />
         </div>
       )}
     </motion.div>

@@ -1,6 +1,6 @@
 // client/src/App.jsx
 import { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend } from 'chart.js';
 import { AdminDashboard } from './components/AdminDashboard';
 import { UserDashboard } from './components/UserDashboard';
@@ -34,7 +34,7 @@ function App() {
       setIsSessionJoined(true);
     });
     socket.on('new-poll', (data) => {
-      console.log('New poll:', data);
+      console.log('New poll received:', data);
       setMessage(`New poll: ${data.question}`);
       setPollId(data.pollId);
     });
@@ -73,6 +73,12 @@ function App() {
     }
   };
 
+  const createInitialPoll = () => {
+    if (isSessionJoined) {
+      socket.emit('poll-created', { sessionCode, question: 'Test Poll?', options: ['Yes', 'No'] });
+    }
+  };
+
   return (
     <Router>
       <div className="min-h-screen bg-gray-100">
@@ -80,8 +86,8 @@ function App() {
           <h2 className="text-xl font-bold">Real-Time Interaction Module</h2>
           <div className="mt-2 flex space-x-2">
             <input
-              type="text" // Explicitly set to text
-              className="p-2 border rounded text-black bg-white" // Ensure contrast
+              type="text"
+              className="p-2 border rounded text-black bg-white"
               value={sessionCode}
               onChange={(e) => setSessionCode(e.target.value)}
               placeholder="Enter session code"
@@ -93,8 +99,22 @@ function App() {
             >
               Join
             </button>
+            {isSessionJoined && (
+              <button
+                className="p-2 bg-green-500 text-white rounded"
+                onClick={createInitialPoll}
+              >
+                Create Test Poll
+              </button>
+            )}
           </div>
-          <p className="mt-2 text-white">{message}</p> {/* Ensure message is visible */}
+          {isSessionJoined && (
+            <div className="mt-2">
+              <Link to="/admin" className="mr-2 text-white underline">Admin</Link>
+              <Link to="/user" className="text-white underline">User</Link>
+            </div>
+          )}
+          <p className="mt-2 text-white">{message}</p>
         </nav>
         <Routes>
           <Route
