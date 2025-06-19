@@ -1,17 +1,12 @@
-// client/src/App.jsx
-import { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend } from 'chart.js';
+import { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { AdminDashboard } from './components/AdminDashboard';
 import { UserDashboard } from './components/UserDashboard';
 import io from 'socket.io-client';
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend);
-
 const socket = io('http://localhost:5000');
 
 function App() {
-  const [isConnected, setIsConnected] = useState(false);
   const [sessionCode, setSessionCode] = useState('');
   const [isSessionJoined, setIsSessionJoined] = useState(false);
   const [message, setMessage] = useState('');
@@ -19,15 +14,8 @@ function App() {
   const [userId] = useState('user1');
 
   useEffect(() => {
-    socket.on('connect', () => {
-      console.log('Connected:', socket.id);
-      setIsConnected(true);
-    });
-    socket.on('disconnect', () => {
-      console.log('Disconnected');
-      setIsConnected(false);
-      setIsSessionJoined(false);
-    });
+    socket.on('connect', () => console.log('Connected:', socket.id));
+    socket.on('disconnect', () => console.log('Disconnected'));
     socket.on('session-joined', (data) => {
       console.log('Joined session:', data);
       setMessage(data.message);
@@ -40,18 +28,20 @@ function App() {
     });
     socket.on('poll-updated', (data) => {
       console.log('Poll updated:', data);
-      setMessage(`Poll updated: ${JSON.stringify(data.results)}`);
+      setMessage(`Poll updated: ${data.results.question}`);
     });
     socket.on('session-ended', (data) => {
       console.log('Session ended:', data);
       setMessage(data.message);
       setIsSessionJoined(false);
-      setPollId(''); // Clear pollId to prevent re-render issues
+      setPollId('');
     });
     socket.on('error', (data) => {
       console.log('Error:', data);
       setMessage(data.message);
-      setIsSessionJoined(false);
+    });
+    socket.on('connect_error', (error) => {
+      console.error('Connection error:', error.message);
     });
 
     return () => {
@@ -62,6 +52,7 @@ function App() {
       socket.off('poll-updated');
       socket.off('session-ended');
       socket.off('error');
+      socket.off('connect_error');
     };
   }, []);
 
@@ -73,11 +64,7 @@ function App() {
     }
   };
 
-  const createInitialPoll = () => {
-    if (isSessionJoined) {
-      socket.emit('poll-created', { sessionCode, question: 'Test Poll?', options: ['Yes', 'No'], duration: 5 });
-    }
-  };
+  console.log('Render - isSessionJoined:', isSessionJoined, 'pollId:', pollId); // Debug state
 
   return (
     <Router>
@@ -99,14 +86,6 @@ function App() {
             >
               Join
             </button>
-            {isSessionJoined && (
-              <button
-                className="p-2 bg-green-500 text-white rounded"
-                onClick={createInitialPoll}
-              >
-                Create Test Poll
-              </button>
-            )}
           </div>
           {isSessionJoined && (
             <div className="mt-2">
@@ -131,7 +110,7 @@ function App() {
             path="/user"
             element={
               isSessionJoined ? (
-                <UserDashboard socket={socket} sessionCode={sessionCode} pollId={pollId} userId={userId} />
+                <UserDashboardWrapper socket={socket} sessionCode={sessionCode} pollId={pollId} userId={userId} />
               ) : (
                 <Navigate to="/" replace />
               )
@@ -143,5 +122,19 @@ function App() {
     </Router>
   );
 }
+
+// Wrapper to handle route-specific logic
+const UserDashboardWrapper = ({ socket, sessionCode, pollId, userId }) => {
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location.pathname === '/user' && sessionCode) {
+      console.log('Requesting poll for session:', sessionCode);
+      socket.emit('request-poll', { sessionCode, userId });
+    }
+  }, [location, socket, sessionCode, userId]);
+
+  return <UserDashboard socket={socket} sessionCode={sessionCode} pollId={pollId} userId={userId} />;
+};
 
 export default App;

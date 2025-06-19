@@ -52,7 +52,6 @@ const sessions = {};
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // Join a session
   socket.on('join-session', async ({ sessionCode, userId }) => {
     try {
       const startTime = Date.now();
@@ -79,7 +78,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Create and broadcast a new poll
   socket.on('poll-created', async (data) => {
     try {
       const startTime = Date.now();
@@ -99,7 +97,7 @@ io.on('connection', (socket) => {
         question,
         options,
         responses: [],
-        duration,
+        duration: duration || undefined, // Use undefined if not provided, letting schema handle default
         isActive: true,
       });
       const savePollStart = Date.now();
@@ -109,9 +107,11 @@ io.on('connection', (socket) => {
       await Session.findByIdAndUpdate(session._id, { $push: { polls: pollId } }, { new: true, lean: true });
       console.log(`Updated session ${session._id} with poll ${pollId} in ${Date.now() - updateSessionStart}ms`);
       if (!sessions[sessionCode]) sessions[sessionCode] = { polls: {} };
-      sessions[sessionCode].polls[pollId] = { question, options, responses: {}, duration, isActive: true };
+      sessions[sessionCode].polls[pollId] = { question, options, responses: {}, duration: duration || undefined, isActive: true };
+      const roomClients = io.sockets.adapter.rooms.get(sessionCode)?.size || 0;
+      console.log(`Room ${sessionCode} has ${roomClients} clients`);
       const broadcastStart = Date.now();
-      io.to(sessionCode).emit('new-poll', { pollId, question, options, duration });
+      io.to(sessionCode).emit('new-poll', { pollId, question, options, duration: duration || undefined });
       console.log(`Broadcasted new-poll to ${sessionCode} in ${Date.now() - broadcastStart}ms`);
       console.log(`New poll ${pollId} created in session ${sessionCode} in ${Date.now() - startTime}ms`);
     } catch (error) {
@@ -120,36 +120,54 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle poll response and broadcast updated results
   socket.on('poll-response', async ({ pollId, userId, selectedOption }) => {
     try {
       const startTime = Date.now();
+      console.log('Received poll-response:', { pollId, userId, selectedOption });
       const poll = await Poll.findById(pollId).lean();
       if (poll && poll.isActive) {
-        const response = new UserResponse({ pollId, userId, selectedOption });
-        await response.save();
-        await Poll.findByIdAndUpdate(pollId, { $push: { responses: response._id } });
-        const responses = await UserResponse.find({ pollId }).lean();
-        const results = {
-          question: poll.question,
-          options: poll.options,
-          responses: responses.reduce((acc, resp) => {
-            acc[resp.selectedOption] = (acc[resp.selectedOption] || 0) + 1;
-            return acc;
-          }, {}),
-        };
-        if (!sessions[poll.sessionId.toString()]) sessions[poll.sessionId.toString()] = { polls: {} };
-        sessions[poll.sessionId.toString()].polls[pollId] = { ...results, isActive: true };
-        io.to(poll.sessionId.toString()).emit('poll-updated', { pollId, results });
-        console.log(`Response recorded for poll ${pollId} by user ${userId} in ${Date.now() - startTime}ms`);
+        if (selectedOption >= 0 && selectedOption < poll.options.length) {
+          const response = new UserResponse({
+            pollId,
+            userId,
+            selectedOption,
+            // sessionId: poll.sessionId, // Uncomment if sessionId is required
+          });
+          console.log('Saving response:', response);
+          await response.save();
+          console.log('Response saved, updating Poll:', pollId);
+          await Poll.findByIdAndUpdate(pollId, { $push: { responses: response._id } });
+          const responses = await UserResponse.find({ pollId }).lean();
+          console.log('Fetched responses:', responses);
+          const results = {
+            question: poll.question,
+            options: poll.options,
+            responses: responses.reduce((acc, resp) => {
+              acc[resp.selectedOption] = (acc[resp.selectedOption] || 0) + 1;
+              return acc;
+            }, {}),
+          };
+          console.log('Calculated results:', results);
+          if (!sessions[poll.sessionId.toString()]) sessions[poll.sessionId.toString()] = { polls: {} };
+          sessions[poll.sessionId.toString()].polls[pollId] = { ...results, isActive: true };
+          const broadcastStart = Date.now();
+          io.to(poll.sessionId.toString()).emit('poll-updated', { pollId, results });
+          console.log(`Broadcasted poll-updated to ${poll.sessionId.toString()} in ${Date.now() - broadcastStart}ms`);
+          console.log(`Response recorded for poll ${pollId} by user ${userId} in ${Date.now() - startTime}ms`);
+        } else {
+          console.error('Invalid selectedOption:', selectedOption);
+          socket.emit('error', { message: 'Invalid response option' });
+        }
+      } else {
+        console.error('Poll not found or inactive:', pollId);
+        socket.emit('error', { message: 'Failed to record response' });
       }
     } catch (error) {
       console.error('Poll response error:', error.message, error.stack);
-      socket.emit('error', { message: 'Failed to record response' });
+      socket.emit('error', { message: 'Failed to record response', details: error.message });
     }
   });
 
-  // Handle poll end
   socket.on('poll-ended', async (data) => {
     try {
       const startTime = Date.now();
@@ -167,7 +185,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // End session
   socket.on('session-ended', async ({ sessionCode }) => {
     try {
       const startTime = Date.now();
@@ -178,11 +195,31 @@ io.on('connection', (socket) => {
         await session.save();
         io.to(sessionCode).emit('session-ended', { message: 'Session has ended' });
         console.log(`Session ${sessionCode} ended in ${Date.now() - startTime}ms`);
-        delete sessions[sessionCode]; // Clean up in-memory session
+        delete sessions[sessionCode];
       }
     } catch (error) {
       console.error('Session end error:', error.message, error.stack);
       socket.emit('error', { message: 'Failed to end session' });
+    }
+  });
+
+  socket.on('request-poll', async ({ sessionCode, userId, pollId }) => {
+    try {
+      console.log('Received request-poll:', { sessionCode, userId, pollId });
+      const session = await Session.findOne({ sessionCode, status: 'active' }).lean();
+      if (session) {
+        const poll = pollId ? await Poll.findById(pollId).lean() : await Poll.findOne({ sessionId: session._id }).lean();
+        if (poll) {
+          console.log('Sending poll data:', { pollId: poll._id, question: poll.question, options: poll.options, duration: poll.duration });
+          socket.emit('new-poll', { pollId: poll._id, question: poll.question, options: poll.options, duration: poll.duration });
+        } else {
+          console.log('No poll found for session:', sessionCode);
+          socket.emit('error', { message: 'No active poll found' });
+        }
+      }
+    } catch (error) {
+      console.error('Request poll error:', error.message, error.stack);
+      socket.emit('error', { message: 'Failed to request poll' });
     }
   });
 
