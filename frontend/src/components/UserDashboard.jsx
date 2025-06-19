@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-// import { motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { Chart as ChartJS, ArcElement, PieController, Tooltip, Legend } from 'chart.js';
 import { ErrorBoundary } from 'react-error-boundary';
 
