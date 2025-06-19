@@ -17,11 +17,9 @@ const checkSession = async (req, res, next) => {
 
 // Create a new session
 router.post('/sessions', async (req, res) => {
-  const { adminId } = req.body;
-  if (!adminId) return res.status(400).json({ error: 'adminId is required' });
-
+  const { adminId } = req.body; // adminId is now optional
   const sessionCode = uuidv4().split('-')[0]; // Short unique code (e.g., first 8 chars)
-  const session = new Session({ sessionCode, adminId });
+  const session = new Session({ sessionCode, adminId: adminId || null }); // Use null if not provided
   await session.save();
   res.status(201).json({ sessionCode });
 });

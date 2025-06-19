@@ -49,46 +49,53 @@ app.get('/', (req, res) => {
 // In-memory cache for real-time updates
 const sessions = {};
 
+// Endpoint to create a new session for admin
+app.post('/api/sessions', async (req, res) => {
+  try {
+    const sessionCode = uuidv4().split('-')[0]; // Generate a short unique session code
+    const session = new Session({ sessionCode, status: 'active', polls: [] });
+    await session.save();
+    res.status(201).json({ sessionCode });
+  } catch (error) {
+    console.error('Error creating session:', error.message);
+    res.status(500).json({ message: 'Failed to create session' });
+  }
+});
+
+// Socket.IO logic
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
+  // Join a session
   socket.on('join-session', async ({ sessionCode, userId }) => {
     try {
-      const startTime = Date.now();
-      let session = await Session.findOne({ sessionCode, status: 'active' }).lean();
+      const session = await Session.findOne({ sessionCode, status: 'active' }).lean();
       if (!session) {
-        session = new Session({ sessionCode, status: 'active', polls: [] });
-        await session.save();
-        console.log(`Created new session ${sessionCode} in ${Date.now() - startTime}ms`);
+        socket.emit('error', { message: 'Session not found or inactive' });
+        return;
       }
       socket.join(sessionCode);
       socket.emit('session-joined', { sessionId: session._id, message: 'Joined session' });
-      console.log(`User ${userId} joined session ${sessionCode} in ${Date.now() - startTime}ms`);
       if (!sessions[sessionCode]) sessions[sessionCode] = { polls: {} };
-      const syncStart = Date.now();
       const polls = await Poll.find({ sessionId: session._id }).lean();
       polls.forEach(poll => {
         sessions[sessionCode].polls[poll._id] = poll;
         socket.emit('new-poll', { pollId: poll._id, question: poll.question, options: poll.options, duration: poll.duration });
       });
-      console.log(`Synced ${polls.length} polls for ${sessionCode} in ${Date.now() - syncStart}ms`);
     } catch (error) {
-      console.error('Join session error:', error.message, error.stack);
+      console.error('Join session error:', error.message);
       socket.emit('error', { message: 'Failed to join session' });
     }
   });
 
+  // Handle poll creation
   socket.on('poll-created', async (data) => {
     try {
-      const startTime = Date.now();
-      console.log('Received poll-created event:', data);
       const { sessionCode, question, options, duration } = data;
       let session = await Session.findOne({ sessionCode, status: 'active' }).lean();
       if (!session) {
-        console.warn(`Session ${sessionCode} not found, creating new`);
         session = new Session({ sessionCode, status: 'active', polls: [] });
         await session.save();
-        console.log(`Created session ${sessionCode} in ${Date.now() - startTime}ms`);
       }
       const pollId = uuidv4();
       const poll = new Poll({
@@ -97,33 +104,23 @@ io.on('connection', (socket) => {
         question,
         options,
         responses: [],
-        duration: duration || undefined, // Use undefined if not provided, letting schema handle default
+        duration: duration || undefined,
         isActive: true,
       });
-      const savePollStart = Date.now();
       await poll.save();
-      console.log(`Saved poll ${pollId} in ${Date.now() - savePollStart}ms`);
-      const updateSessionStart = Date.now();
-      await Session.findByIdAndUpdate(session._id, { $push: { polls: pollId } }, { new: true, lean: true });
-      console.log(`Updated session ${session._id} with poll ${pollId} in ${Date.now() - updateSessionStart}ms`);
+      await Session.findByIdAndUpdate(session._id, { $push: { polls: pollId } });
       if (!sessions[sessionCode]) sessions[sessionCode] = { polls: {} };
       sessions[sessionCode].polls[pollId] = { question, options, responses: {}, duration: duration || undefined, isActive: true };
-      const roomClients = io.sockets.adapter.rooms.get(sessionCode)?.size || 0;
-      console.log(`Room ${sessionCode} has ${roomClients} clients`);
-      const broadcastStart = Date.now();
       io.to(sessionCode).emit('new-poll', { pollId, question, options, duration: duration || undefined });
-      console.log(`Broadcasted new-poll to ${sessionCode} in ${Date.now() - broadcastStart}ms`);
-      console.log(`New poll ${pollId} created in session ${sessionCode} in ${Date.now() - startTime}ms`);
     } catch (error) {
-      console.error('Poll creation error:', error.message, error.stack);
-      socket.emit('error', { message: 'Failed to create poll', details: error.message });
+      console.error('Poll creation error:', error.message);
+      socket.emit('error', { message: 'Failed to create poll' });
     }
   });
 
+  // Handle poll responses
   socket.on('poll-response', async ({ pollId, userId, selectedOption }) => {
     try {
-      const startTime = Date.now();
-      console.log('Received poll-response:', { pollId, userId, selectedOption });
       const poll = await Poll.findById(pollId).lean();
       if (poll && poll.isActive) {
         if (selectedOption >= 0 && selectedOption < poll.options.length) {
@@ -131,14 +128,10 @@ io.on('connection', (socket) => {
             pollId,
             userId,
             selectedOption,
-            // sessionId: poll.sessionId, // Uncomment if sessionId is required
           });
-          console.log('Saving response:', response);
           await response.save();
-          console.log('Response saved, updating Poll:', pollId);
           await Poll.findByIdAndUpdate(pollId, { $push: { responses: response._id } });
           const responses = await UserResponse.find({ pollId }).lean();
-          console.log('Fetched responses:', responses);
           const results = {
             question: poll.question,
             options: poll.options,
@@ -147,79 +140,51 @@ io.on('connection', (socket) => {
               return acc;
             }, {}),
           };
-          console.log('Calculated results:', results);
           if (!sessions[poll.sessionId.toString()]) sessions[poll.sessionId.toString()] = { polls: {} };
           sessions[poll.sessionId.toString()].polls[pollId] = { ...results, isActive: true };
-          const broadcastStart = Date.now();
           io.to(poll.sessionId.toString()).emit('poll-updated', { pollId, results });
-          console.log(`Broadcasted poll-updated to ${poll.sessionId.toString()} in ${Date.now() - broadcastStart}ms`);
-          console.log(`Response recorded for poll ${pollId} by user ${userId} in ${Date.now() - startTime}ms`);
         } else {
-          console.error('Invalid selectedOption:', selectedOption);
           socket.emit('error', { message: 'Invalid response option' });
         }
       } else {
-        console.error('Poll not found or inactive:', pollId);
-        socket.emit('error', { message: 'Failed to record response' });
+        socket.emit('error', { message: 'Poll not found or inactive' });
       }
     } catch (error) {
-      console.error('Poll response error:', error.message, error.stack);
-      socket.emit('error', { message: 'Failed to record response', details: error.message });
+      console.error('Poll response error:', error.message);
+      socket.emit('error', { message: 'Failed to record response' });
     }
   });
 
+  // Handle poll ending
   socket.on('poll-ended', async (data) => {
     try {
-      const startTime = Date.now();
       const { pollId, sessionCode } = data;
       const session = await Session.findOne({ sessionCode }).lean();
       if (session && sessions[sessionCode] && sessions[sessionCode].polls[pollId]) {
         await Poll.findByIdAndUpdate(pollId, { isActive: false });
         sessions[sessionCode].polls[pollId].isActive = false;
         io.to(sessionCode).emit('poll-updated', { pollId, results: sessions[sessionCode].polls[pollId] });
-        console.log(`Poll ${pollId} ended in session ${sessionCode} in ${Date.now() - startTime}ms`);
       }
     } catch (error) {
-      console.error('Poll end error:', error.message, error.stack);
+      console.error('Poll end error:', error.message);
       socket.emit('error', { message: 'Failed to end poll' });
     }
   });
 
+  // Handle session ending
   socket.on('session-ended', async ({ sessionCode }) => {
     try {
-      const startTime = Date.now();
       const session = await Session.findOne({ sessionCode });
       if (session) {
         session.status = 'ended';
         session.endedAt = new Date();
         await session.save();
         io.to(sessionCode).emit('session-ended', { message: 'Session has ended' });
-        console.log(`Session ${sessionCode} ended in ${Date.now() - startTime}ms`);
         delete sessions[sessionCode];
       }
     } catch (error) {
-      console.error('Session end error:', error.message, error.stack);
+      console.error('Session end error:', error.message);
       socket.emit('error', { message: 'Failed to end session' });
-    }
-  });
-
-  socket.on('request-poll', async ({ sessionCode, userId, pollId }) => {
-    try {
-      console.log('Received request-poll:', { sessionCode, userId, pollId });
-      const session = await Session.findOne({ sessionCode, status: 'active' }).lean();
-      if (session) {
-        const poll = pollId ? await Poll.findById(pollId).lean() : await Poll.findOne({ sessionId: session._id }).lean();
-        if (poll) {
-          console.log('Sending poll data:', { pollId: poll._id, question: poll.question, options: poll.options, duration: poll.duration });
-          socket.emit('new-poll', { pollId: poll._id, question: poll.question, options: poll.options, duration: poll.duration });
-        } else {
-          console.log('No poll found for session:', sessionCode);
-          socket.emit('error', { message: 'No active poll found' });
-        }
-      }
-    } catch (error) {
-      console.error('Request poll error:', error.message, error.stack);
-      socket.emit('error', { message: 'Failed to request poll' });
     }
   });
 
@@ -241,6 +206,6 @@ mongoose
     });
   })
   .catch((err) => {
-    console.error('MongoDB connection error:', err.message, err.stack);
+    console.error('MongoDB connection error:', err.message);
     process.exit(1);
   });
