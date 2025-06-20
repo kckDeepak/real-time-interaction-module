@@ -1,37 +1,67 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import PollProgressVisualization from './PollProgressVisualization';
 
 const UserDashboard = ({ socket }) => {
   const { sessionCode } = useParams();
   const [pollId, setPollId] = useState('');
-  const [results, setResults] = useState({
-    question: 'Waiting for poll...',
-    options: [],
-    responses: {},
-  });
+  const [results, setResults] = useState({ question: 'Waiting for poll...', options: [], responses: {} });
   const [selectedOption, setSelectedOption] = useState(null);
   const userId = 'user1'; // Replace with a unique identifier in a real app
 
   useEffect(() => {
-    socket.emit('join-session', { sessionCode, userId });
-    socket.on('new-poll', (data) => {
-      setPollId(data.pollId);
-      setResults({
-        question: data.question,
-        options: data.options,
-        responses: data.options.reduce((acc, _, i) => ({ ...acc, [i]: 0 }), {}),
+    console.log('UserDashboard mounted with sessionCode:', sessionCode, 'socket.connected:', socket.connected);
+    const setupListeners = () => {
+      // Join session with a small delay to ensure connection
+      const joinSession = () => {
+        if (socket.connected) {
+          console.log('Joining session:', sessionCode);
+          socket.emit('join-session', { sessionCode, userId }, (ack) => {
+            console.log('Join session ack:', ack);
+          });
+        } else {
+          console.log('Waiting for connection...');
+          setTimeout(joinSession, 500); // Retry after 500ms
+        }
+      };
+      joinSession();
+
+      socket.on('new-poll', (data) => {
+        console.log('New poll received:', data);
+        setPollId(data.pollId);
+        setResults({
+          question: data.question,
+          options: data.options,
+          responses: data.options.reduce((acc, _, i) => ({ ...acc, [i]: 0 }), {}),
+        });
+        setSelectedOption(null);
       });
-      setSelectedOption(null);
+      socket.on('poll-updated', (data) => {
+        console.log('Poll updated in UserDashboard:', data);
+        if (data.pollId === pollId) {
+          setResults(data.results);
+        }
+      });
+    };
+
+    setupListeners();
+
+    socket.on('disconnect', () => console.log('Disconnected from server'));
+    socket.on('connect', () => {
+      console.log('Reconnected to server, re-joining session');
+      setupListeners();
     });
-    socket.on('poll-updated', (data) => setResults(data.results));
+
     return () => {
+      console.log('UserDashboard unmounted with sessionCode:', sessionCode);
       socket.off('new-poll');
       socket.off('poll-updated');
     };
-  }, [socket, sessionCode]);
+  }, [socket, sessionCode, pollId]);
 
   const submitResponse = () => {
     if (pollId && selectedOption !== null) {
+      console.log('Submitting response - pollId:', pollId, 'userId:', userId, 'selectedOption:', selectedOption);
       socket.emit('poll-response', { pollId, userId, selectedOption });
       setSelectedOption(null);
     }
@@ -67,6 +97,7 @@ const UserDashboard = ({ socket }) => {
           </button>
         </div>
       )}
+      {pollId && <PollProgressVisualization socket={socket} sessionCode={sessionCode} pollId={pollId} />}
     </div>
   );
 };
